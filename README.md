@@ -19,6 +19,10 @@ Usage: po-line-renewal.py [OPTIONS] [PO_LINE_ID_ARGS]...
   minus one day. This is either a bug in the Alma API itself or something
   this tool should work around.
 
+  CAUTION: Due to limitations in the Alma API, the notes fields for any PO Line
+  record updated using this tool will all have 'Created On' and 'Updated On'
+  set to today's date, and 'Updated By' will be changed to 'API, Ex Libris'.
+
 Options:
   --set-name TEXT                 The identifier for the set of PO Lines we
                                   want to update

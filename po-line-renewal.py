@@ -129,6 +129,10 @@ def main(set_name, po_line_id_args, new_renewal_date, new_renewal_period, api_do
     set to a new value. The new value isn't being set explicitly by this tool.
     It is the old value of the field minus one day. This is either a bug in the Alma API itself or something this
     tool should work around.
+
+    CAUTION: Due to limitations in the Alma API, the notes fields for any PO Line record updated using this tool
+    will all have 'Created On' and 'Updated On' set to today's date, and 'Updated By' will be changed to
+    'API, Ex Libris'.
     """
     # Validate input
     if not set_name and not po_line_id_args:
