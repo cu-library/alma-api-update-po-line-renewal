@@ -11,6 +11,8 @@ Usage: po-line-renewal.py [OPTIONS] [PO_LINE_ID_ARGS]...
   A set-name or PO_LINE_ID_ARGS must be provided. If a set-name is provided,
   any PO_LINE_ID_ARGS provided as arguments are also processed.
 
+  The set must be itemized before processing with this tool.
+
   CAUTION: This version of the tool has an issue with dates and timezone
   handling. In some cases, the renewal date is set to the day before the one
   requested. Also, in some other cases, other date fields in the record
