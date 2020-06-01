@@ -110,20 +110,21 @@ def update_po_line(po_line_id: str, new_renewal_date: str, new_renewal_period: i
 
 
 @click.command()
-@click.option('--set-name', help='The identifier for the set of PO Lines we want to update')
+@click.option('--set-name', help='The name of the set of PO Lines we want to update')
+@click.option('--set-id', help='The set ID for the set of PO Lines we want to update')
 @click.option('--new-renewal-date', required=True, type=str, callback=validate_renewal_date,
               help='YYYY-MM-DD for the new renewal date')
 @click.option('--new-renewal-period', type=click.IntRange(1, 365), help='The new renewal period')
 @click.option('--api-domain', type=str, default='api-ca.hosted.exlibrisgroup.com')
 @click.option('--api-key', type=str, required=True, help='Alma API Key')
 @click.argument('po_line_id_args', nargs=-1)
-def main(set_name, po_line_id_args, new_renewal_date, new_renewal_period, api_domain, api_key):
+def main(set_name, set_id, po_line_id_args, new_renewal_date, new_renewal_period, api_domain, api_key):
     """PO Line Renewal - Bulk update the renewal date and renewal period for PO Lines in Alma
 
-    A set-name or PO_LINE_ID_ARGS must be provided. If a set-name is provided, any PO_LINE_ID_ARGS provided
-    as arguments are also processed.
+    A set name, set ID, or PO_LINE_ID_ARGS must be provided. If a set name or set ID are provided, any PO_LINE_ID_ARGS
+    provided as arguments are also processed.
 
-    The set must be itemized before processing with this tool.
+    The set must be itemized and made public before processing with this tool.
 
     CAUTION: This version of the tool has an issue with dates and timezone handling.
     In some cases, the renewal date is set to the day before the one requested.
@@ -137,8 +138,11 @@ def main(set_name, po_line_id_args, new_renewal_date, new_renewal_period, api_do
     'API, Ex Libris'.
     """
     # Validate input
-    if not set_name and not po_line_id_args:
+    if not set_name and not po_line_id_args and not set_id:
         sys.exit('Error: A set name or PO Line IDs must be provided.')
+
+    if set_name and set_id:
+        sys.exit('Error: A set name OR a set ID can be provided, not both.')
 
     # Ensure we can access the API using the provided key.
     headers = {'Authorization': f'apikey {api_key}',
@@ -147,18 +151,18 @@ def main(set_name, po_line_id_args, new_renewal_date, new_renewal_period, api_do
     if not all((can_access_api('/almaws/v1/conf/sets'), can_access_api('/almaws/v1/acq/po-lines'))):
         sys.exit('Error: Unable to access both Alma API urls.')
 
-    # If the set name is provided, get the associated PO Line IDs
-    if set_name:
-        try:
-            set_id = get_set_id(set_name, api_domain, headers)
-        except SetIDNotFound:
-            sys.exit(f'Error: Unable to find set ID for "{set_name}".')
-        click.echo(f'Found ID {set_id} for the set "{set_name}".')
-
+    # If the set name  or set ID is provided, get the associated PO Line IDs
+    if set_name or set_id:
+        if set_name:
+            try:
+                set_id = get_set_id(set_name, api_domain, headers)
+            except SetIDNotFound:
+                sys.exit(f'Error: Unable to find set ID for "{set_name}".')
+            click.echo(f'Found ID {set_id} for the set "{set_name}".')
         try:
             click.echo('Retrieving the PO Line IDs in the set...')
             po_line_ids = get_po_line_ids(set_id, api_domain, headers)
-            click.echo('Done!')  # po_line_ids()
+            click.echo('Done!')
         except SetIDNotFound:
             sys.exit(f'Error: Unable to find set for ID "{set_id}".')
         except MembersOfSetNotFound:
