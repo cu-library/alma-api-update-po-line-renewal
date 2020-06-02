@@ -4,22 +4,19 @@ from datetime import date
 from typing import Callable, Set
 import click
 import requests
+from requests.exceptions import RequestException
 import sys
-import pprint
 
 OFFSET_LIMIT_WINDOW_SIZE = 50
 
 
-class SetIDNotFound(Exception):
+class SetIDNotFoundError(Exception):
     """The set ID for the given set name could not be found."""
 
 
-class MembersOfSetNotFound(Exception):
-    """The set did not contain any members."""
-
-
-class FailedPOLineUpdate(Exception):
-    """An error occurred when updating a PO Line."""
+def echo_request_exception(e: RequestException):
+    click.echo(f'{e.response.url} [{e.response.status_code}]')
+    click.echo(e.response.text)
 
 
 def validate_renewal_date(ctx, param, value):
@@ -31,23 +28,13 @@ def validate_renewal_date(ctx, param, value):
         raise click.BadParameter(f'{str(e)}')
 
 
-def debug(r):
-    """Print the url, status code, and content of a response."""
-    click.echo(f'URL: {r.url}')
-    click.echo(f'Status Code: {r.status_code}')
-    click.echo(pprint.pformat(r.content.decode('utf=8')))
-
-
-def build_can_access_url(api_domain: str, headers: dict) -> Callable[[str], bool]:
+def build_can_access_url(api_domain: str, headers: dict) -> Callable[[str], None]:
     """Returns a function which sends the request using the api domain and headers."""
 
-    def can_access_url(url: str) -> bool:
+    def can_access_url(url: str):
         params = {'limit': 1}
         r = requests.get(f'https://{api_domain}{url}', params=params, headers=headers)
-        if r.status_code != 200:
-            debug(r)
-            return False
-        return True
+        r.raise_for_status()
 
     return can_access_url
 
@@ -57,13 +44,11 @@ def get_set_id(set_name: str, api_domain: str, headers: dict) -> str:
     for offset in range(0, 1000, OFFSET_LIMIT_WINDOW_SIZE):  # If we need 1000 offsets, we've gone too far
         params = {'limit': OFFSET_LIMIT_WINDOW_SIZE, 'offset': offset}
         r = requests.get(f'https://{api_domain}/almaws/v1/conf/sets', params=params, headers=headers)
-        if r.status_code != 200:
-            debug(r)
-            raise SetIDNotFound
-        content = r.json()
-        if 'set' not in content:
-            raise SetIDNotFound
-        for alma_set in content['set']:
+        r.raise_for_status()
+        json_content = r.json()
+        if 'set' not in json_content:
+            raise SetIDNotFoundError
+        for alma_set in json_content['set']:
             if alma_set['name'] == set_name:
                 return alma_set['id']
 
@@ -75,14 +60,12 @@ def get_po_line_ids(set_id: str, api_domain: str, headers: dict) -> Set[str]:
     for offset in range(0, 1000, OFFSET_LIMIT_WINDOW_SIZE):  # If we need 1000 offsets, we've gone too far
         params = {'limit': OFFSET_LIMIT_WINDOW_SIZE, 'offset': offset}
         r = requests.get(f'https://{api_domain}/almaws/v1/conf/sets/{set_id}/members', params=params, headers=headers)
-        if r.status_code != 200:
-            debug(r)
-            raise SetIDNotFound
-        content = r.json()
-        total_po_lines = content['total_record_count']
-        if 'member' not in content:
+        r.raise_for_status()
+        json_content = r.json()
+        total_po_lines = json_content['total_record_count']
+        if 'member' not in json_content:
             break
-        for po_line in content['member']:
+        for po_line in json_content['member']:
             po_line_ids.add(po_line['id'])
         # The ol' slash-r trick is used here instead of a click progress bar
         # because we don't want to make an initial HTTP request to get the total number of PO Lines in the set.
@@ -96,17 +79,13 @@ def get_po_line_ids(set_id: str, api_domain: str, headers: dict) -> Set[str]:
 def update_po_line(po_line_id: str, new_renewal_date: str, new_renewal_period: int, api_domain: str, headers: dict):
     """Update the PO Line with the new renewal date and new renewal reminder period."""
     r = requests.get(f'https://{api_domain}/almaws/v1/acq/po-lines/{po_line_id}', headers=headers)
-    if r.status_code != 200:
-        debug(r)
-        raise FailedPOLineUpdate
+    r.raise_for_status()
     content = r.json()
     content['renewal_date'] = f'{new_renewal_date}Z'
     if new_renewal_period:
         content['renewal_period'] = new_renewal_period
     r = requests.put(f'https://{api_domain}/almaws/v1/acq/po-lines/{po_line_id}', headers=headers, json=content)
-    if r.status_code != 200:
-        debug(r)
-        raise FailedPOLineUpdate
+    r.raise_for_status()
 
 
 @click.command()
@@ -139,7 +118,7 @@ def main(set_name, set_id, po_line_id_args, new_renewal_date, new_renewal_period
     """
     # Validate input
     if not set_name and not po_line_id_args and not set_id:
-        sys.exit('Error: A set name or PO Line IDs must be provided.')
+        sys.exit('Error: A set name, set ID, or PO Line IDs must be provided.')
 
     if set_name and set_id:
         sys.exit('Error: A set name OR a set ID can be provided, not both.')
@@ -148,39 +127,57 @@ def main(set_name, set_id, po_line_id_args, new_renewal_date, new_renewal_period
     headers = {'Authorization': f'apikey {api_key}',
                'Accept': 'application/json'}
     can_access_api = build_can_access_url(api_domain, headers)
-    if not all((can_access_api('/almaws/v1/conf/sets'), can_access_api('/almaws/v1/acq/po-lines'))):
-        sys.exit('Error: Unable to access both Alma API urls.')
+    try:
+        can_access_api('/almaws/v1/conf/sets')
+        can_access_api('/almaws/v1/acq/po-lines')
+    except RequestException as e:
+        echo_request_exception(e)
+        sys.exit('Error: Unable to access the Alma API.')
 
-    # If the set name  or set ID is provided, get the associated PO Line IDs
-    if set_name or set_id:
-        if set_name:
-            try:
-                set_id = get_set_id(set_name, api_domain, headers)
-            except SetIDNotFound:
-                sys.exit(f'Error: Unable to find set ID for "{set_name}".')
-            click.echo(f'Found ID {set_id} for the set "{set_name}".')
+    # If the set name is provided, get the set ID.
+    if set_name:
         try:
-            click.echo('Retrieving the PO Line IDs in the set...')
+            set_id = get_set_id(set_name, api_domain, headers)
+        except SetIDNotFoundError:
+            sys.exit(f'Error: Unable to find set ID for "{set_name}".')
+        except RequestException as e:
+            echo_request_exception(e)
+            sys.exit('Error: Error accessing the Alma API.')
+        click.echo(f'Found ID {set_id} for the set "{set_name}".')
+
+    # If the set ID has been provided or found, query the API for the associated PO Line IDs.
+    if set_id:
+        click.echo(f'Retrieving the IDs for PO Line records in the set with ID {set_id}.')
+        try:
             po_line_ids = get_po_line_ids(set_id, api_domain, headers)
-            click.echo('Done!')
-        except SetIDNotFound:
-            sys.exit(f'Error: Unable to find set for ID "{set_id}".')
-        except MembersOfSetNotFound:
-            sys.exit(f'Error: Unable to find any members for set ID "{set_id}".')
+        except RequestException as e:
+            echo_request_exception(e)
+            sys.exit('Error: Error accessing the Alma API.')
+        click.echo('Done!')
     else:
         po_line_ids = set()
 
     # Update the set of PO Lines with the ones provided as arguments.
     po_line_ids.update(set(po_line_id_args))
 
-    # Use a fancy progress bar iterator on a sorted list of the PO Line IDs
+    # Track any failed PO Line updates
+    failed_po_line_ids = []
+
+    # Use a fancy progress bar iterator on a sorted list of the PO Line IDs.
     with click.progressbar(sorted(list(po_line_ids)), show_pos=True,
-                           label='Updating PO Lines') as progress_for_po_line_ids:
+                           label='Updating PO Line Records', item_show_func=lambda x: x) as progress_for_po_line_ids:
         for po_line_id in progress_for_po_line_ids:
             try:
                 update_po_line(po_line_id, new_renewal_date, new_renewal_period, api_domain, headers)
-            except FailedPOLineUpdate:
-                sys.exit(f'Error: Failed to update PO Line with ID "{po_line_id}".')
+            except RequestException as e:
+                failed_po_line_ids.append((po_line_id, e))
+
+    # Inform the user about the failed PO Line updates.
+    if failed_po_line_ids:
+        click.echo(f"{len(failed_po_line_ids)} PO Line record updates failed:")
+        for failed_po_line_id, e in failed_po_line_ids:
+            click.echo(failed_po_line_id)
+            echo_request_exception(e)
 
 
 if __name__ == '__main__':
