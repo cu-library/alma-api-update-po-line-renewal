@@ -41,7 +41,7 @@ def build_can_access_url(api_domain: str, headers: dict) -> Callable[[str], None
 
 def get_set_id(set_name: str, api_domain: str, headers: dict) -> str:
     """Search the /sets Alma API endpoint for a set with a given name, returning it's ID."""
-    for offset in range(0, 1000, OFFSET_LIMIT_WINDOW_SIZE):  # If we need 1000 offsets, we've gone too far
+    for offset in range(0, 1000*OFFSET_LIMIT_WINDOW_SIZE, OFFSET_LIMIT_WINDOW_SIZE):  # If we need 1000 offsets, we've gone too far
         params = {'limit': OFFSET_LIMIT_WINDOW_SIZE, 'offset': offset}
         r = requests.get(f'https://{api_domain}/almaws/v1/conf/sets', params=params, headers=headers)
         r.raise_for_status()
